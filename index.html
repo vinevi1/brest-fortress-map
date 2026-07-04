@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        html {
+            background-color: black;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            margin: 0;
+        }
+        #overlay-container {
+            position: fixed;
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 24px;
+            background-color: black;
+            color: rgba(0,255,0,1);
+            font-weight: 700;
+            text-align: right;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            padding-right: 4px;
+            font-size: 12px;
+            z-index: 200;
+        }
+        #ui-container {
+            display: grid;
+            grid-template-rows: 1fr 1fr;
+            height: 100vh;
+            width: 100%;
+            overflow: hidden;
+            padding-bottom: 24px;
+            user-select: none;
+        }
+        #map-container {
+            position: relative;
+            display: inline-block;
+            clear: both;
+            overflow: scroll;
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+            grid-row: 2;
+        }
+        
+        #map {
+            max-width: none;
+            display: block;
+            position: relative;
+            z-index: 10;
+            /* transform: rotate(-41deg); */
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 20;
+        }
+        #sidebar {
+            height: 100%;
+            width: 100%;
+            background-color: black;
+            overflow: hidden;
+            grid-row: 1
+        }
+        .marker {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            top: 0
+        }
+        .marker:hover .marker-circle {
+            background-color: rgba(170,170,170,1);
+        }
+        .marker.selected .marker-circle {
+            border: 2px solid rgba(255,255,255,1);
+            background-color: rgba(80,155,80,1) !important;
+            cursor: default
+        }
+        #sidebar img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        #scale-controls {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 0;
+        }
+        .scale-control {
+            cursor: pointer;
+            border: 1px solid rgba(0,200,0,1);
+            padding: 2px;
+            font-size: 10px;
+        }
+        .scale-control.selected {
+            background-color: rgba(0,255,0,0.3);
+        }
+        .marker-circle {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background-color: rgba(100,100,100,1);
+            border: 2px solid rgba(255,255,255,1);
+            transform: scale(0.8);
+            z-index: 3;
+        }
+        .marker-direction {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            transform: scale(0.75);
+            border-top-left-radius: 100%;
+            background-color: black;
+            pointer-events: none;
+            border-bottom: 2px solid rgba(255,255,255,1);
+            border-right: 2px solid rgba(255,255,255,1);
+        }
+
+        @media only screen and (min-width: 768px) {
+            #ui-container {
+                grid-template-rows: none;
+                grid-template-columns: 1fr 1fr;
+            }
+            #map-container {
+                grid-row: unset;
+            }
+            #sidebar {
+                grid-row: unset;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="overlay-container">
+        <div id="scale-controls">
+            <div class="scale-control" data-scale="1">x1</div>
+            <div class="scale-control" data-scale="2">x2</div>
+            <div class="scale-control" data-scale="3">x3</div>
+        </div>
+        <div id="mouse-coords"></div>
+    </div>
+    <div id="ui-container">
+        <div id="map-container">
+            <img id="map" src="https://catalog.archives.gov/medialz/cartographic/rg-373/306065/Batch0016/RG373_175789544_TUGX_0363_SG_0009_01.jpg">
+            <div id="canvas"></div>
+        </div>
+        <div id="sidebar"></div>
+    </div>
+    <script>
+    const areas = [
+        { name: 'Холмская брама / 1', x: 631, y: 2410, direction: 40, image: 'https://upload.wikimedia.org/wikipedia/commons/3/38/Biera%C5%9Bcie%2C_Cho%C5%82mskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A5%D0%BE%D0%BB%D0%BC%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281935%29_%283%29.jpg' },
+        { name: 'Холмская брама / 2', x: 622, y: 2422, direction: 40, image: 'https://upload.wikimedia.org/wikipedia/commons/8/83/Biera%C5%9Bcie%2C_Cho%C5%82mskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A5%D0%BE%D0%BB%D0%BC%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%28H._Vogel%2C_1915%29.jpg' },
+        { name: 'Холмская брама / 3', x: 604, y: 2415, direction: 60, image: 'https://upload.wikimedia.org/wikipedia/commons/2/26/Biera%C5%9Bcie%2C_Cho%C5%82mskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A5%D0%BE%D0%BB%D0%BC%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281929%29.jpg' },
+        { name: 'Холмская брама / 4', x: 639, y: 2399, direction: 40, image: 'https://upload.wikimedia.org/wikipedia/commons/3/3a/Biera%C5%9Bcie%2C_Cho%C5%82mskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A5%D0%BE%D0%BB%D0%BC%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281941-44%29.jpg' },
+        { name: 'Холмская брама / 5', x: 612, y: 2438, direction: 40, image: 'https://upload.wikimedia.org/wikipedia/commons/5/5a/Biera%C5%9Bcie%2C_Cho%C5%82mskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A5%D0%BE%D0%BB%D0%BC%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281928%29.jpg' },
+        { name: 'Холмская брама / 6', x: 628, y: 2444, direction: 10, image: 'https://upload.wikimedia.org/wikipedia/commons/9/9a/Biera%C5%9Bcie%2C_Cho%C5%82mskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A5%D0%BE%D0%BB%D0%BC%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281918%29_%282%29.jpg' },
+        { name: 'Тэрэспальскі мост / 1', x: 451, y: 2139, direction: 95, image: 'https://upload.wikimedia.org/wikipedia/commons/a/af/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%2818.03.1918%29.jpg' },
+        { name: 'Тэрэспальскі мост / 2', x: 395, y: 2134, direction: 110, image:'https://upload.wikimedia.org/wikipedia/commons/1/14/Biera%C5%9Bcie%2C_Buh%2C_Terespalski_most._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%83%D0%B3%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D1%96_%D0%BC%D0%BE%D1%81%D1%82_%28H._Vogel%2C_1915%29_%282%29.jpg' },
+        { name: 'Тэрэспальскі мост / 3', x: 445, y: 2162, direction: 70, image:'https://upload.wikimedia.org/wikipedia/commons/3/38/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%2809.1939%29.jpg' },
+        { name: 'Тэрэспальскі мост / 4', x: 435, y: 2117, direction: 115, image:'https://upload.wikimedia.org/wikipedia/commons/4/4d/Biera%C5%9Bcie%2C_Buh%2C_Terespalski_most._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%83%D0%B3%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D1%96_%D0%BC%D0%BE%D1%81%D1%82_%281928%29.jpg' },
+        { name: 'Тэрэспальскі мост / 5', x: 460, y: 2147, direction: 95, image:'https://upload.wikimedia.org/wikipedia/commons/3/31/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%2809.1939%29_%282%29.jpg' },
+        { name: 'Тэрэспальскі мост / 6', x: 363, y: 2070, direction: 110, image:'https://upload.wikimedia.org/wikipedia/commons/f/f0/Biera%C5%9Bcie%2C_Buh%2C_Terespalski_most._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%83%D0%B3%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D1%96_%D0%BC%D0%BE%D1%81%D1%82_%28M._Zaleski%2C_1846%29.jpg' },
+        { name: 'Тэрэспальскі мост / 7', x: 491, y: 2277, direction: 0, image:'https://upload.wikimedia.org/wikipedia/commons/5/5c/Biera%C5%9Bcie%2C_Buh._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%83%D0%B3_%281930%29.jpg' },
+        { name: 'Тэрэспальскі мост / 8', x: 480, y: 2148, direction: 95, image:'https://upload.wikimedia.org/wikipedia/commons/7/7c/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281915-18%29.jpg' },
+        { name: 'Тэрэспальскі мост / 9', x: 451, y: 2147, direction: 95, image:'https://upload.wikimedia.org/wikipedia/commons/1/1a/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%2817.09.1939%29.jpg' },
+        { name: '', x: 884, y: 2343, direction: 90, image:'https://upload.wikimedia.org/wikipedia/commons/9/9f/Biera%C5%9Bcie%2C_Buh._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%83%D0%B3_%281929%29.jpg' },
+        { name: 'Тэрэспальская брама / 1', x: 547, y: 2153, direction: 270, image:'https://upload.wikimedia.org/wikipedia/commons/9/95/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281915%29.jpg' },
+        { name: 'Тэрэспальская брама / 2', x: 545, y: 2142, direction: 240, image:'https://upload.wikimedia.org/wikipedia/commons/3/3e/Biera%C5%9Bcie%2C_Terespalskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A2%D1%8D%D1%80%D1%8D%D1%81%D0%BF%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281915-18%29_%282%29.jpg' },
+        { name: 'Тэрэспальская брама / 3', x: 484, y: 2117, direction: 130, image:'https://upload.wikimedia.org/wikipedia/commons/f/fb/%D0%A1%D0%B0%D0%BF%D1%91%D1%80%D0%BD%D0%B0%D1%8F_%D0%BF%D1%80%D1%8B%D1%81%D1%82%D0%B0%D0%BD%D1%8C._%D0%91%D1%80%D1%8D%D1%81%D1%86%D0%BA%D0%B0%D1%8F_%D0%BA%D1%80%D1%8D%D0%BF%D0%B0%D1%81%D1%86%D1%8C.jpg' },
+        { name: 'Пескі, Брыгіцкі / 1', x: 555, y: 1677, direction: 190, image:'https://upload.wikimedia.org/wikipedia/commons/2/2a/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281941-43%29.jpg' },
+        { name: 'Пескі, Брыгіцкі / 2', x: 478, y: 1729, direction: 175, image:'https://upload.wikimedia.org/wikipedia/commons/6/6a/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281943-44%29.jpg' },
+        { name: 'Пескі, Брыгіцкі / 3', x: 626, y: 1685, direction: 230, image:'https://upload.wikimedia.org/wikipedia/commons/d/df/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281941-43%29_%283%29.jpg' },
+        { name: 'Пескі, Брыгіцкі / 4', x: 540, y: 1675, direction: 190, image:'https://upload.wikimedia.org/wikipedia/commons/f/f6/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281941-43%29_%282%29.jpg' },
+        { name: 'Тюрьма "Бригитки" / 1', x: 501, y: 1855, direction: 0, image:'https://upload.wikimedia.org/wikipedia/commons/2/20/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%2816-19.09.1939%29.jpg' },
+        { name: 'Тюрьма "Бригитки" / 2', x: 512, y: 1898, direction: 330, image:'https://upload.wikimedia.org/wikipedia/commons/f/ff/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281928%29_%282%29.jpg' },
+        { name: 'Тюрьма "Бригитки" / 3', x: 518, y: 1908, direction: 0, image:'https://upload.wikimedia.org/wikipedia/commons/b/b5/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281930-39%29.jpg' },
+        { name: 'Тюрьма "Бригитки" / 4', x: 551, y: 1849, direction: 280, image:'https://upload.wikimedia.org/wikipedia/commons/0/07/Biera%C5%9Bcie%2C_Pieski%2C_Brygicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B5%D1%81%D0%BA%D1%96%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%281936%29.jpg' },
+        { name: 'Брыгіцкі мост / 1', x: 500, y: 1990, direction: 40, image:'https://upload.wikimedia.org/wikipedia/commons/5/57/Biera%C5%9Bcie%2C_Muchaviec%2C_Brygicki_most._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9C%D1%83%D1%85%D0%B0%D0%B2%D0%B5%D1%86%2C_%D0%91%D1%80%D1%8B%D0%B3%D1%96%D1%86%D0%BA%D1%96_%D0%BC%D0%BE%D1%81%D1%82_%28H._Vogel%2C_1915%29.jpg' },
+        { name: 'Кобрынская брама / 1', x: 787, y: 2262, direction: 0, image: 'https://upload.wikimedia.org/wikipedia/commons/f/f3/Biera%C5%9Bcie%2C_Kobrynskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9A%D0%BE%D0%B1%D1%80%D1%8B%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%2809.1939%29.jpg' },
+        { name: '', x: 853, y: 2345, direction: 85, image: 'https://upload.wikimedia.org/wikipedia/commons/f/fa/Biera%C5%9Bcie%2C_Kobrynskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9A%D0%BE%D0%B1%D1%80%D1%8B%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281915%29.jpg' },
+        { name: 'Кобрынская брама / 3', x: 842, y: 2187, direction: 230, image: 'https://upload.wikimedia.org/wikipedia/commons/5/5f/Biera%C5%9Bcie%2C_Kobrynskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9A%D0%BE%D0%B1%D1%80%D1%8B%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281928%29.jpg' },
+        { name: 'Кобрынская брама / 4', x: 763, y: 2240, direction: 70, image: 'https://upload.wikimedia.org/wikipedia/commons/1/1a/Biera%C5%9Bcie%2C_Kobrynskaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9A%D0%BE%D0%B1%D1%80%D1%8B%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281918%29.jpg' },
+        { name: 'вуліца Базылянская / 1', x: 834, y: 2294, direction: 160, image: 'https://upload.wikimedia.org/wikipedia/commons/0/02/Biera%C5%9Bcie%2C_Bazylanskaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D0%B0%D0%B7%D1%8B%D0%BB%D1%8F%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%2818.03.1918%29.jpg' },
+        { name: 'вуліца Базылянская / 2', x: 839, y: 2314, direction: 160, image: 'https://upload.wikimedia.org/wikipedia/commons/2/2d/Biera%C5%9Bcie%2C_Bazylanskaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D0%B0%D0%B7%D1%8B%D0%BB%D1%8F%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%281916%29.jpg' },
+        { name: 'вуліца Базылянская / 3', x: 851, y: 2363, direction: 160, image: 'https://upload.wikimedia.org/wikipedia/commons/8/8f/Eerste_Wereldoorlog_Duitse_militairen_in_de_straten_van_de_veroverde_stad_Brest-Litowsk%2C_SFA022802260.jpg' },
+        { name: 'вуліца Базылянская / 4', x: 849, y: 2312, direction: 190, image: 'https://upload.wikimedia.org/wikipedia/commons/4/42/Biera%C5%9Bcie%2C_Bazylanskaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D0%B0%D0%B7%D1%8B%D0%BB%D1%8F%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%281928%29.jpg' },
+        { name: 'вуліца Базылянская / 5', x: 862, y: 2386, direction: 335, image: 'https://upload.wikimedia.org/wikipedia/commons/a/ac/Biera%C5%9Bcie%2C_Bazylanskaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D0%B0%D0%B7%D1%8B%D0%BB%D1%8F%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%281915-18%29.jpg' },
+        { name: '', x: 748, y: 2395, direction: 320, image: 'https://upload.wikimedia.org/wikipedia/commons/e/e8/Ods%C5%82oni%C4%99cie_w_Brze%C5%9Bciu_pomnika_ku_czci_poleg%C5%82ych_w_I_wojnie_%C5%9Bwiatowej_NAC_1-U-326.jpg' },
+        { name: '', x: 837, y: 2347, direction: 270, image: 'https://upload.wikimedia.org/wikipedia/commons/2/22/Biera%C5%9Bcie%2C_Bernardynskaja%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D0%B0%D1%8F%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%2809.1939%29.jpg' },
+        { name: 'Бэрнардынскі / 1', x: 614, y: 2564, direction: 100, image: 'https://upload.wikimedia.org/wikipedia/commons/6/6e/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281930-39%29_%282%29.jpg' },
+        { name: 'Бэрнардынскі / 2', x: 690, y: 2535, direction: 180, image: 'https://upload.wikimedia.org/wikipedia/commons/1/18/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281936%29.jpg' },
+        { name: 'Бэрнардынскі / 3', x: 600, y: 2527, direction: 165, image: 'https://upload.wikimedia.org/wikipedia/commons/e/eb/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281936%29_%283%29.jpg' },
+        { name: 'Бэрнардынскі / 4', x: 722, y: 2499, direction: 180, image: 'https://upload.wikimedia.org/wikipedia/commons/4/49/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281917%29_%282%29.jpg' },
+        { name: 'Бэрнардынскі / 5', x: 583, y: 2475, direction: 140, image: 'https://upload.wikimedia.org/wikipedia/commons/0/09/Biera%C5%9Bciejskaja_fartecyja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%D0%B9%D1%81%D0%BA%D0%B0%D1%8F_%D1%84%D0%B0%D1%80%D1%82%D1%8D%D1%86%D1%8B%D1%8F_%281936%29.jpg' },
+        { name: 'Бэрнардынскі / 6', x: 574, y: 2553, direction: 150, image: 'https://upload.wikimedia.org/wikipedia/commons/4/40/Biera%C5%9Bciejskaja_fartecyja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%D0%B9%D1%81%D0%BA%D0%B0%D1%8F_%D1%84%D0%B0%D1%80%D1%82%D1%8D%D1%86%D1%8B%D1%8F_%2824.09.1918%29.jpg' },
+        { name: 'Бэрнардынскі / 7', x: 607, y: 2580, direction: 30, image: 'https://upload.wikimedia.org/wikipedia/commons/a/aa/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%28H._Vogel%2C_1915%29_%283%29.jpg' },
+        { name: 'Бэрнардынскі / 8', x: 627, y: 2559, direction: 230, image: 'https://upload.wikimedia.org/wikipedia/commons/d/d6/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281915%29.jpg' },
+        { name: 'Бэрнардынскі / 9', x: 731, y: 2569, direction: 345, image: 'https://upload.wikimedia.org/wikipedia/commons/2/2a/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281920%29.jpg' },
+        { name: 'Бэрнардынскі / 10', x: 693, y: 2575, direction: null, image: 'https://upload.wikimedia.org/wikipedia/commons/1/1c/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281855%29.jpg' },
+        { name: 'Бэрнардынскі / 11', x: 700, y: 2545, direction: 110, image: 'https://upload.wikimedia.org/wikipedia/commons/f/f7/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%281917%29.jpg' },
+        { name: 'Бэрнардынскі / 12', x: 753, y: 2543, direction: 240, image: 'https://upload.wikimedia.org/wikipedia/commons/1/15/Biera%C5%9Bcie%2C_Bernardynski._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%8D%D1%80%D0%BD%D0%B0%D1%80%D0%B4%D1%8B%D0%BD%D1%81%D0%BA%D1%96_%28H._Vogel%2C_1915%29_%282%29.jpg' },
+        { name: 'Усходняя брама / 1', x: 1198, y: 2242, direction: 180, image: 'https://upload.wikimedia.org/wikipedia/commons/7/7d/%D0%91%D1%80%D1%8D%D1%81%D1%86%D0%BA%D0%B0%D1%8F_%D0%BA%D1%80%D1%8D%D0%BF%D0%B0%D1%81%D1%86%D1%8C._%D0%9C%D1%96%D1%85%D0%B0%D0%B9%D0%BB%D0%B0%D1%9E%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0._1915-1918_%D0%B3%D0%B3..jpg' },
+        { name: 'Усходняя брама / 2', x: 1224, y: 2348, direction: 340, image: 'https://upload.wikimedia.org/wikipedia/commons/6/64/Biera%C5%9Bcie%2C_Uschodniaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A3%D1%81%D1%85%D0%BE%D0%B4%D0%BD%D1%8F%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%28H._Vogel%2C_1915%29.jpg'},
+        { name: 'Усходняя брама / 3', x: 1193, y: 2340, direction: 20, image: 'https://upload.wikimedia.org/wikipedia/commons/f/f0/Besetzung_der_Zitadelle_Brest-Litowsk_%281939%29.jpg'},
+        { name: 'Усходняя брама / 4', x: 1185, y: 2240, direction: 160, image: 'https://upload.wikimedia.org/wikipedia/commons/6/62/%D0%91%D1%80%D1%8D%D1%81%D1%86%D0%BA%D0%B0%D1%8F_%D0%BA%D1%80%D1%8D%D0%BF%D0%B0%D1%81%D1%86%D1%8C._%D0%A3%D0%BD%D1%83%D1%82%D1%80%D0%B0%D0%BD%D1%8B_%D0%B2%D1%8B%D0%B3%D0%BB%D1%8F%D0%B4_%D0%A3%D1%81%D1%85%D0%BE%D0%B4%D0%BD%D1%8F%D0%B9_%D0%B1%D1%80%D0%B0%D0%BC%D1%8B._%D0%A7%D1%8D%D1%80%D0%B2%D0%B5%D0%BD%D1%8C_1941_%D0%B3%D0%BE%D0%B4%2C_%D0%B0%D0%B4%D1%80%D0%B0%D0%B7%D1%83_%D0%BF%D0%B0%D1%81%D0%BB%D1%8F_%D1%9E%D0%B7%D1%8F%D1%86%D1%86%D1%8F_%D0%BA%D1%80%D1%8D%D0%BF%D0%B0%D1%81%D1%86%D1%96.jpg'},
+        { name: 'Паўднёвая брама', x: 547, y: 2693, direction: 180, image: 'https://upload.wikimedia.org/wikipedia/commons/a/a4/Biera%C5%9Bcie%2C_Pa%C5%ADdniovaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B0%D1%9E%D0%B4%D0%BD%D1%91%D0%B2%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281915-18%29.jpg' },
+        { name: 'Капліца шпітальная', x: 550, y: 2649, direction: 130, image: 'https://upload.wikimedia.org/wikipedia/commons/7/78/Biera%C5%9Bciejskaja_fartecyja%2C_Kaplica._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%D0%B9%D1%81%D0%BA%D0%B0%D1%8F_%D1%84%D0%B0%D1%80%D1%82%D1%8D%D1%86%D1%8B%D1%8F%2C_%D0%9A%D0%B0%D0%BF%D0%BB%D1%96%D1%86%D0%B0_%281931%29_%282%29.jpg' },
+        { name: 'Рынак-Кавальская / 1', x: 631, y: 2344, direction: 80, image: 'https://upload.wikimedia.org/wikipedia/commons/d/d0/Biera%C5%9Bcie%2C_Rynak-Kavalskaja%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA-%D0%9A%D0%B0%D0%B2%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%281928%29_%282%29.jpg' },
+        { name: 'Рынак-Кавальская / 2', x: 719, y: 2282, direction: 200, image: 'https://upload.wikimedia.org/wikipedia/commons/3/36/Biera%C5%9Bcie%2C_Rynak%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%281930-39%29.jpg' },
+        { name: 'Рынак-Кавальская / 3', x: 635, y: 2204, direction: 140, image: 'https://upload.wikimedia.org/wikipedia/commons/7/73/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%28M._Hobert%2C_1930%29.jpg' },
+        { name: 'Рынак-Кавальская / 4', x: 665, y: 2301, direction: 140, image: 'https://upload.wikimedia.org/wikipedia/commons/7/78/Biera%C5%9Bcie%2C_Rynak%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%281941-44%29_%282%29.jpg' },
+        { name: 'Рынак-Кавальская / 5', x: 668, y: 2325, direction: 110, image: 'https://upload.wikimedia.org/wikipedia/commons/9/9d/Biera%C5%9Bcie%2C_Rynak%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%281930-39%29_%284%29.jpg' },
+        { name: 'Рынак-Кавальская / 6', x: 653, y: 2335, direction: 90, image: 'https://upload.wikimedia.org/wikipedia/commons/d/d8/Biera%C5%9Bcie%2C_Rynak%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%281926%29.jpg' },
+        { name: 'Рынак-Кавальская / 7', x: 665, y: 2337, direction: 55, image: 'https://upload.wikimedia.org/wikipedia/commons/6/64/Biera%C5%9Bcie%2C_Rynak-Kavalskaja%2C_Jezuicki._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA-%D0%9A%D0%B0%D0%B2%D0%B0%D0%BB%D1%8C%D1%81%D0%BA%D0%B0%D1%8F%2C_%D0%95%D0%B7%D1%83%D1%96%D1%86%D0%BA%D1%96_%28H._Vogel%2C_1915%29.jpg' },
+        { name: 'Рынак-Кавальская / 8', x: 624, y: 2212, direction: 125, image: 'https://upload.wikimedia.org/wikipedia/commons/0/0b/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%281928%29.jpg' },
+        { name: 'Рынак-Кавальская / 9', x: 624, y: 2247, direction: 90, image: 'https://upload.wikimedia.org/wikipedia/commons/9/90/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%281937%29.jpg' },
+        { name: 'Рынак-Кавальская / 10', x: 670, y: 2282, direction: 0, image: 'https://upload.wikimedia.org/wikipedia/commons/9/9d/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%281928-39%29_%282%29.jpg' },
+        { name: 'Рынак-Кавальская / 11', x: 684, y: 2279, direction: 340, image: 'https://upload.wikimedia.org/wikipedia/commons/5/5d/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%2809.1939%29.jpg' },
+        { name: 'Рынак-Кавальская / 12', x: 664, y: 2238, direction: 100, image: 'https://upload.wikimedia.org/wikipedia/commons/e/e1/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%2830.11.1917%29.jpg' },
+        { name: 'Рынак-Кавальская / 13', x: 564, y: 2164, direction: 125, image: 'https://upload.wikimedia.org/wikipedia/commons/b/b0/Biera%C5%9Bcie%2C_Rynak%2C_Garnizonnaja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%A0%D1%8B%D0%BD%D0%B0%D0%BA%2C_%D0%93%D0%B0%D1%80%D0%BD%D1%96%D0%B7%D0%BE%D0%BD%D0%BD%D0%B0%D1%8F_%2816-19.09.1939%29.jpg' },
+        { name: 'Паўночная брама / 1', x: 1199, y: 1896, direction: 250, image: 'https://upload.wikimedia.org/wikipedia/commons/6/64/Biera%C5%9Bcie%2C_Pa%C5%ADno%C4%8Dnaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B0%D1%9E%D0%BD%D0%BE%D1%87%D0%BD%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%281930%29.jpg'},
+        { name: 'Паўночная брама / 2', x: 1187, y: 1895, direction: 250, image: 'https://upload.wikimedia.org/wikipedia/commons/b/b6/Biera%C5%9Bcie%2C_Pa%C5%ADno%C4%8Dnaja_brama._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9F%D0%B0%D1%9E%D0%BD%D0%BE%D1%87%D0%BD%D0%B0%D1%8F_%D0%B1%D1%80%D0%B0%D0%BC%D0%B0_%28H._Vogel%2C_1915%29.jpg'},
+        { name: 'Паўночная брама / 3', x: 1142, y: 1898, direction: 90, image: 'https://upload.wikimedia.org/wikipedia/commons/8/8e/Biera%C5%9Bciejskaja_fartecyja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%D0%B9%D1%81%D0%BA%D0%B0%D1%8F_%D1%84%D0%B0%D1%80%D1%82%D1%8D%D1%86%D1%8B%D1%8F_%281920-29%29.jpg'},
+        { name: 'Мухавец / 1', x: 1191, y: 2523, direction: 285, image: 'https://upload.wikimedia.org/wikipedia/commons/a/ad/Biera%C5%9Bcie%2C_Muchaviec._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9C%D1%83%D1%85%D0%B0%D0%B2%D0%B5%D1%86_%287.09.1916%29_%282%29.jpg'},
+        { name: 'Мухавец / 2', x: 1251, y: 2567, direction: 290, image: 'https://upload.wikimedia.org/wikipedia/commons/a/a7/Biera%C5%9Bcie%2C_Muchaviec._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9C%D1%83%D1%85%D0%B0%D0%B2%D0%B5%D1%86_%281913%29.jpg'},
+        { name: 'Мухавец / 3', x: 1261, y: 2557, direction: 130, image: 'https://upload.wikimedia.org/wikipedia/commons/8/86/Biera%C5%9Bcie%2C_Muchaviec._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9C%D1%83%D1%85%D0%B0%D0%B2%D0%B5%D1%86_%281912%29_%282%29.jpg'},
+        { name: 'Мухавец / 4', x: 1260, y: 2546, direction: 280, image: 'https://upload.wikimedia.org/wikipedia/commons/e/e4/Biera%C5%9Bcie%2C_Muchaviec._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9C%D1%83%D1%85%D0%B0%D0%B2%D0%B5%D1%86_%287.09.1916%29.jpg'},
+        { name: 'Мухавец / 5', x: 628, y: 2415, direction: 320, image: 'https://upload.wikimedia.org/wikipedia/commons/4/44/Biera%C5%9Bcie%2C_Muchaviec._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%9C%D1%83%D1%85%D0%B0%D0%B2%D0%B5%D1%86_%28H._Vogel%2C_1915%29.jpg'},
+        { name: 'Граф Бэрг', x: 901, y: 1173, direction: 45, image: 'https://upload.wikimedia.org/wikipedia/commons/9/92/Biera%C5%9Bcie%2C_Graf_Berg._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%93%D1%80%D0%B0%D1%84_%D0%91%D1%8D%D1%80%D0%B3_%28H._Vogel%2C_1915%29.jpg'},
+        { name: '', x: 761, y: 2356, direction: 30, image: 'https://upload.wikimedia.org/wikipedia/commons/9/9d/Biera%C5%9Bciejskaja_fartecyja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%D0%B9%D1%81%D0%BA%D0%B0%D1%8F_%D1%84%D0%B0%D1%80%D1%82%D1%8D%D1%86%D1%8B%D1%8F_%28H._Vogel%2C_1915%29.jpg'},
+        { name: '', x: 481, y: 1994, direction: 320, image: 'https://upload.wikimedia.org/wikipedia/commons/8/87/Biera%C5%9Bcie%2C_Buh._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%91%D1%83%D0%B3_%28H._Vogel%2C_1915%29_%282%29.jpg'},
+        { name: '', x: 879, y: 2255, direction: 90, image: 'https://upload.wikimedia.org/wikipedia/commons/5/54/Biera%C5%9Bcie%2C_Za%C5%ADhrynieckaje_pradmie%C5%9Bcie._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%2C_%D0%97%D0%B0%D1%9E%D0%B3%D1%80%D1%8B%D0%BD%D0%B5%D1%86%D0%BA%D0%B0%D0%B5_%D0%BF%D1%80%D0%B0%D0%B4%D0%BC%D0%B5%D1%81%D1%8C%D1%86%D0%B5_%281915-18%29_%282%29.jpg'},
+        { name: '', x: 842, y: 2258, direction: 90, image: 'https://upload.wikimedia.org/wikipedia/commons/7/70/%D0%91%D0%B0%D0%B7%D1%8B%D0%BB%D1%8C%D1%8F%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B1%D0%B0%D1%82%D0%B0%D1%80%D1%8D%D1%8F.jpg'},
+        { name: '', x: 872, y: 2247, direction: 230, image: 'https://upload.wikimedia.org/wikipedia/commons/5/57/Biera%C5%9Bciejskaja_fartecyja._%D0%91%D0%B5%D1%80%D0%B0%D1%81%D1%8C%D1%86%D0%B5%D0%B9%D1%81%D0%BA%D0%B0%D1%8F_%D1%84%D0%B0%D1%80%D1%82%D1%8D%D1%86%D1%8B%D1%8F_%281916%29.jpg'},
+        { name: '', x: 844, y: 1942, direction: 120, image: 'https://upload.wikimedia.org/wikipedia/commons/f/fa/Das_Wohnviertel_der_verschiedenen_Delegationen_in_Brest-Litowsk._-_LABW_-_Generallandesarchiv_Karlsruhe_F-S_Wochenschau_Nr._73.jpg'},
+
+    ]
+
+    let scale = 2
+    let overlayEl = null
+    let mapEl = null
+    let mapContainerEl = null
+    let mouseCoordsEl = null
+    let canvasEl = null
+    let sidebarEl = null
+    let markers = []
+    let isDragging = false
+
+    const queryString = window.location.search
+    const urlParams = new URLSearchParams(queryString)
+    let currentMarker = urlParams.get('marker') ?? 0 
+    
+    function selectArea(id) {
+        currentMarker = id
+        const urlParams = new URLSearchParams(window.location.search)
+        urlParams.set('marker', id)
+        const newUrl = `${window.location.pathname}?${urlParams.toString()}`
+        window.history.pushState({ path: newUrl }, '', newUrl)
+        const area = areas[id]
+        const el = document.querySelector(`.marker[data-area="${id}"]`)
+        sidebarEl.innerHTML = `<img title="${area.name}" src="${area.image}">`
+        for (const m of markers) {
+            m.classList.remove('selected')
+        }
+        el.classList.add('selected')
+    }
+
+    function setScale(value) {
+        scale = value
+        document.querySelectorAll('.scale-control').forEach(i => i.classList.remove('selected'))
+        document.querySelector(`.scale-control[data-scale="${value}"]`).classList.add('selected')
+    }
+
+    function initMap() {
+        const w = mapEl.naturalWidth * scale
+        const h = mapEl.naturalHeight * scale
+        const renderedWidth = w + 'px'
+        const renderedHeight = h + 'px'
+
+        mapEl.style.width = renderedWidth
+        mapEl.style.height = renderedHeight
+        canvasEl.style.width = renderedWidth
+        canvasEl.style.height = renderedHeight
+
+        canvasEl.innerHTML = null
+        markers = []
+
+        for (const [index, area] of areas.entries()) {
+            const el = document.createElement('div')
+            el.classList.add('marker')
+            el.title = area.name
+            el.style.left = (area.x * scale) + 'px'
+            el.style.top = (area.y * scale) + 'px'
+            el.style.transform = `translate(-50%,-50%) rotate(${(area.direction - 135)}deg)`
+            el.addEventListener('click', (event) => {
+                event.stopPropagation()
+                selectArea(index)
+            })
+            el.dataset.area = index
+            el.innerHTML = `
+                <div class="marker-circle"></div>
+                ${(area.direction != null) ? `<div class="marker-direction"></div>` : ``}
+            `
+            if (currentMarker == index) {
+                el.classList.add('selected')
+            }
+            markers.push(el)
+            canvasEl.appendChild(el)
+        }
+        document.querySelector(`.marker[data-area="${currentMarker}"]`).scrollIntoView({ block: "center", inline: "center" })
+    }
+
+    window.addEventListener('load', () => {
+        mapEl = document.querySelector('#map')
+        mapContainerEl = document.querySelector('#map-container')
+        overlayEl = document.querySelector('#overlay')
+        canvasEl = document.querySelector('#canvas')
+        sidebarEl = document.querySelector('#sidebar')
+        mouseCoordsEl = document.querySelector('#mouse-coords')
+        document.querySelectorAll('.scale-control').forEach(i => {
+            i.addEventListener('click', () => { setScale(i.dataset.scale); initMap() })
+        })
+
+        mapContainerEl.addEventListener('mousemove', (event) => {
+            const rect = mapEl.getBoundingClientRect()
+            const x = event.clientX - rect.left - mapEl.clientLeft + mapEl.scrollLeft
+            const y = event.clientY - rect.top - mapEl.clientTop + mapEl.scrollTop
+            mouseCoordsEl.innerHTML = `X: ${Math.round(x / scale)} / Y: ${Math.round(y / scale)}`
+        })
+        mapContainerEl.addEventListener('click', (event) => {
+            if (event.ctrlKey) {
+                const rect = mapEl.getBoundingClientRect()
+                const x = event.clientX - rect.left - mapEl.clientLeft + mapEl.scrollLeft
+                const y = event.clientY - rect.top - mapEl.clientTop + mapEl.scrollTop
+                const clipboard = `x: ${Math.round(x / scale)}, y: ${Math.round(y / scale)}`
+                navigator.clipboard.writeText(clipboard)
+                window.alert(`Координаты мыши скопированы в буфер обмена.\n${clipboard}`)
+            }
+        })
+        mapContainerEl.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return
+            isDragging = true
+            mapContainerEl.style.cursor = 'grabbing'
+        })
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return
+            e.preventDefault()
+            mapContainerEl.scrollLeft -= e.movementX
+            mapContainerEl.scrollTop -= e.movementY
+        })
+
+        window.addEventListener('mouseup', () => {
+            if (!isDragging) return
+            isDragging = false
+            mapContainerEl.style.cursor = 'grab'
+        })
+
+        mapContainerEl.style.cursor = 'grab'
+
+        setScale(2)
+        initMap()
+        selectArea(currentMarker)
+    })
+</script>
+</body>
+</html>
